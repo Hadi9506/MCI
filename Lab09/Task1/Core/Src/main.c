@@ -18,11 +18,8 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-#include "stdarg.h" 
-#include "stdio.h"  
-#include "stm32f3xx_hal_adc.h"
-#include "string.h"
-#include <stdlib.h>
+#include "stm32f3xx_hal_i2c.h"
+#include <stdio.h>
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -62,8 +59,8 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_I2C1_Init(void);
 static void MX_SPI1_Init(void);
-static void MX_USB_PCD_Init(void);
 static void MX_USART2_UART_Init(void);
+static void MX_USB_PCD_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -77,53 +74,6 @@ static void MX_USART2_UART_Init(void);
   * @brief  The application entry point.
   * @retval int
   */
-
-#define OUT_X_L  0x28
-#define OUT_X_H  0x29
-#define OUT_Y_L  0x2A
-#define OUT_Y_H  0x2B
-#define OUT_Z_L  0x2C
-#define OUT_Z_H  0x2D
-# define CTRL_REG1 0x20
-# define CTRL_REG1_VAL 0b10001111
-void gyro_init ()
-{
-  uint8_t tx [2] = {CTRL_REG1 , CTRL_REG1_VAL};
-  HAL_GPIO_WritePin (GPIOE , GPIO_PIN_3 , GPIO_PIN_RESET);
-  HAL_SPI_Transmit (& hspi1 , tx , 2, HAL_MAX_DELAY);
-  HAL_GPIO_WritePin (GPIOE , GPIO_PIN_3 , GPIO_PIN_SET  );
-}
-// ===== Read Single Register =====
-uint8_t gyro_read_reg(uint8_t reg)
-{
-    uint8_t tx = reg | 0x80;  // MSB=1 for read
-    uint8_t rx = 0;
-
-    HAL_GPIO_WritePin(GPIOE, GPIO_PIN_3, GPIO_PIN_RESET);  // CS LOW
-    HAL_SPI_Transmit(&hspi1, &tx, 1, HAL_MAX_DELAY);       // send address
-    HAL_SPI_Receive(&hspi1, &rx, 1, HAL_MAX_DELAY);        // receive byte
-    HAL_GPIO_WritePin(GPIOE, GPIO_PIN_3, GPIO_PIN_SET);    // CS HIGH
-
-    return rx;
-}
-
-// ===== Read X, Y, Z =====
-void gyro_read_xyz(int16_t *x, int16_t *y, int16_t *z)
-{
-    uint8_t tx = OUT_X_L | 0x80 | 0x40;  // read bit + auto-increment bit
-    uint8_t rx[6] = {0};
-
-    HAL_GPIO_WritePin(GPIOE, GPIO_PIN_3, GPIO_PIN_RESET);  // CS LOW once
-    HAL_SPI_Transmit(&hspi1, &tx, 1, HAL_MAX_DELAY);       // send start register
-    HAL_SPI_Receive(&hspi1, rx, 6, HAL_MAX_DELAY);         // read all 6 bytes
-    HAL_GPIO_WritePin(GPIOE, GPIO_PIN_3, GPIO_PIN_SET);    // CS HIGH once
-
-    *x = (int16_t)((rx[1] << 8) | rx[0]);  // XH | XL
-    *y = (int16_t)((rx[3] << 8) | rx[2]);  // YH | YL
-    *z = (int16_t)((rx[5] << 8) | rx[4]);  // ZH | ZL
-}
-
-
 int main(void)
 {
 
@@ -151,38 +101,27 @@ int main(void)
   MX_GPIO_Init();
   MX_I2C1_Init();
   MX_SPI1_Init();
-  MX_USB_PCD_Init();
   MX_USART2_UART_Init();
+  MX_USB_PCD_Init();
   /* USER CODE BEGIN 2 */
-
+    HAL_I2C_Init(&hi2c1);
+    uint8_t buffer[16];
+    HAL_I2C_Mem_Read(&hi2c1, 0x33, 0x0F, I2C_MEMADD_SIZE_8BIT, buffer, 16, HAL_MAX_DELAY);
+    char output[128];
+    snprintf(output, sizeof(output), "0x%02X\r\n", buffer[0]);
+    HAL_UART_Transmit(&huart2, (uint8_t*)output, sizeof(output), HAL_MAX_DELAY);
   /* USER CODE END 2 */
-
-
- 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  gyro_init();  
-  int16_t x, y, z;
-  uint8_t temp_raw;
-  char buf[64];
-
   while (1)
   {
-      temp_raw = gyro_read_reg(0x26);   // read temperature register
-      gyro_read_xyz(&x, &y, &z);        // read X, Y, Z
-      
-      float x_dps = x * 0.00875f;
-      float y_dps = y * 0.00875f;
-      float z_dps = z * 0.00875f;
-      
-      // Updated to match your exact requested format
-      sprintf(buf, "%.2f %.2f %.2f\r\n", x_dps, y_dps, z_dps);
-      HAL_UART_Transmit(&huart2, (uint8_t*)buf, strlen(buf), HAL_MAX_DELAY);
+    /* USER CODE END WHILE */
 
-      HAL_Delay(10);
+    /* USER CODE BEGIN 3 */
   }
   /* USER CODE END 3 */
 }
+
 /**
   * @brief System Clock Configuration
   * @retval None
@@ -249,7 +188,7 @@ static void MX_I2C1_Init(void)
 
   /* USER CODE END I2C1_Init 1 */
   hi2c1.Instance = I2C1;
-  hi2c1.Init.Timing = 0x2000090E;
+  hi2c1.Init.Timing = 0x00201D2B;
   hi2c1.Init.OwnAddress1 = 0;
   hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
   hi2c1.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
@@ -300,17 +239,17 @@ static void MX_SPI1_Init(void)
   hspi1.Instance = SPI1;
   hspi1.Init.Mode = SPI_MODE_MASTER;
   hspi1.Init.Direction = SPI_DIRECTION_2LINES;
-  hspi1.Init.DataSize = SPI_DATASIZE_8BIT;
+  hspi1.Init.DataSize = SPI_DATASIZE_4BIT;
   hspi1.Init.CLKPolarity = SPI_POLARITY_LOW;
   hspi1.Init.CLKPhase = SPI_PHASE_1EDGE;
   hspi1.Init.NSS = SPI_NSS_SOFT;
-  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_16;
+  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_4;
   hspi1.Init.FirstBit = SPI_FIRSTBIT_MSB;
   hspi1.Init.TIMode = SPI_TIMODE_DISABLE;
   hspi1.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
   hspi1.Init.CRCPolynomial = 7;
   hspi1.Init.CRCLength = SPI_CRC_LENGTH_DATASIZE;
-  hspi1.Init.NSSPMode = SPI_NSS_PULSE_DISABLE;
+  hspi1.Init.NSSPMode = SPI_NSS_PULSE_ENABLE;
   if (HAL_SPI_Init(&hspi1) != HAL_OK)
   {
     Error_Handler();
