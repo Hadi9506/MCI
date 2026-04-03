@@ -18,14 +18,12 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-#include <stdarg.h>
-#include <string.h>
-#include <stdint.h>
-#include <stdio.h>
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "stdarg.h"
+#include "stdio.h"
+#include "string.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -121,44 +119,24 @@ void cout(const char *fmt, ...) {
     }
 }
 
+/* Global Variables */
+volatile uint32_t capture_ticks = 0;
+volatile uint8_t is_captured = 0;
+const float PPR = 330.0f; 
+const float TIMER_FREQ = 47999999.00f; // 48 MHz
 
-void measure_motor_speed(void) {
-    uint32_t ticks = 0;
-    float frequency = 0.0f;
-    float rpm = 0.0f;
-    
-    // Pulses Per Revolution (PPR). Update this based on your specific motor/encoder disk!
-    // Often 20 for standard lab optical encoder disks.
-    const float PPR = 330.0f; 
-
-    // 1. Wait for pin to be HIGH (ensures we catch a clean falling edge)
-    while(HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_3) == GPIO_PIN_RESET);
-    
-    // 2. Wait for the FIRST falling edge
-    while(HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_3) == GPIO_PIN_SET);
-    
-    // 3. Reset and start Timer 2
-    __HAL_TIM_SET_COUNTER(&htim2, 0); 
-    HAL_TIM_Base_Start(&htim2);
-
-    // 4. Wait for the signal to go HIGH again
-    while(HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_3) == GPIO_PIN_RESET);
-
-    // 5. Wait for the SECOND falling edge
-    while(HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_3) == GPIO_PIN_SET);
-    
-    // 6. Stop timer and capture ticks
-    HAL_TIM_Base_Stop(&htim2);
-    ticks = __HAL_TIM_GET_COUNTER(&htim2);
-
-    // 7. Calculate Frequency and RPM 
-    if(ticks > 0) {
-        frequency = 48000000.0f / (float)ticks;
-        rpm = (frequency * 60.0f) / PPR;
-        cout("Ticks: %lu | Freq: %d Hz | RPM: %d\r\n", ticks, (int)frequency, (int)rpm);
+void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim) {
+    if (htim->Instance == TIM2) {
+        // Get the captured value (time elapsed since last reset)
+        capture_ticks = HAL_TIM_ReadCapturedValue(htim, TIM_CHANNEL_1);
+        
+        // Reset counter immediately for the next pulse period
+        __HAL_TIM_SET_COUNTER(htim, 0);
+        
+        // Signal to the main loop that we have a new measurement
+        is_captured = 1;
     }
 }
-
 
 /* USER CODE END 0 */
 
@@ -219,6 +197,8 @@ int main(void)
   // Start PWM for both motors
   HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);  
   HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_2);  
+
+  HAL_TIM_IC_Start_IT(&htim2, TIM_CHANNEL_1);
   
   // Set motor to spin forward so the encoder actually turns
   // backward_motor();
@@ -231,17 +211,33 @@ int main(void)
     HAL_GPIO_WritePin(GPIOC, GPIO_PIN_2, GPIO_PIN_SET);
     HAL_GPIO_WritePin(GPIOC, GPIO_PIN_9, GPIO_PIN_RESET);
 
-    __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_2 , 400);
+    __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_2 , 200);
 
 
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_11, GPIO_PIN_SET);
     HAL_GPIO_WritePin(GPIOB, GPIO_PIN_15, GPIO_PIN_RESET);
 
-    __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1 , 400);
+    __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1 , 200);
+
+    if (is_captured) {
+        float frequency = 0.0f;
+        float rpm = 0.0f;
+
+        if (capture_ticks > 0) {
+            // Frequency = Timer Clock / Ticks per pulse
+            frequency = TIMER_FREQ / (float)capture_ticks;
+            
+            // RPM = (Freq * 60) / Pulses Per Revolution
+            rpm = (frequency * 60.0f) / PPR;
+
+            cout("Freq: %d Hz | RPM: %d\r\n", (int)frequency, (int)rpm);
+        }
+
+        // Reset flag to wait for the next interrupt
+        is_captured = 0; 
+    }
 
 
-
-      measure_motor_speed();
       HAL_Delay(250); // Small delay to prevent flooding the serial terminal
     /* USER CODE END WHILE */
 
@@ -402,12 +398,13 @@ static void MX_TIM2_Init(void)
 
   TIM_ClockConfigTypeDef sClockSourceConfig = {0};
   TIM_MasterConfigTypeDef sMasterConfig = {0};
+  TIM_IC_InitTypeDef sConfigIC = {0};
 
   /* USER CODE BEGIN TIM2_Init 1 */
 
   /* USER CODE END TIM2_Init 1 */
   htim2.Instance = TIM2;
-  htim2.Init.Prescaler = 0;
+  htim2.Init.Prescaler = 71;
   htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
   htim2.Init.Period = 4294967295;
   htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
@@ -421,9 +418,21 @@ static void MX_TIM2_Init(void)
   {
     Error_Handler();
   }
+  if (HAL_TIM_IC_Init(&htim2) != HAL_OK)
+  {
+    Error_Handler();
+  }
   sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
   sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
   if (HAL_TIMEx_MasterConfigSynchronization(&htim2, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigIC.ICPolarity = TIM_INPUTCHANNELPOLARITY_RISING;
+  sConfigIC.ICSelection = TIM_ICSELECTION_DIRECTTI;
+  sConfigIC.ICPrescaler = TIM_ICPSC_DIV1;
+  sConfigIC.ICFilter = 0;
+  if (HAL_TIM_IC_ConfigChannel(&htim2, &sConfigIC, TIM_CHANNEL_1) != HAL_OK)
   {
     Error_Handler();
   }
