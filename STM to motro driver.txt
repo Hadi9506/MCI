@@ -1,0 +1,10 @@
+Pin Type    | STM Pin | Driver Pin
+----------------------------------
+L1          | PC9     | D7
+R1          | PD11    | D12
+R2          | PB15    | D8
+L2          | PC2     | D6
+R-PWM       | PC6     | D10
+R-ENC       | PD14    | D4
+L-PWM       | PA4     | D9
+L-ENC       | PD3     | D5
