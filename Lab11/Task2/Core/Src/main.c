@@ -14,6 +14,7 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "stm32f3xx_hal.h"
 #include "usb_device.h"
 
 /* Private includes ----------------------------------------------------------*/
@@ -21,6 +22,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdarg.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -39,15 +41,15 @@
 // Kp: main corrective force. Start around 15-30.
 // Ki: eliminates steady-state offset. Start small (0.5-2).
 // Kd: damps oscillations. Start around 0.1-0.5.
-#define KP  34.0f
-#define KI  0.0f
-#define KD  0.62f
+#define KP  30.0f
+#define KI  0.50f
+#define KD 2.0f
 
 /* ---- Setpoint ---- */
 // The target angle in degrees (0 = perfectly upright)
 // You may need to offset this slightly if your robot's center
 // of gravity isn't perfectly centered. Tune by observation.
-#define SETPOINT 0.0f
+#define SETPOINT -2.1f
 
 /* ---- Output Limits ---- */
 #define PID_OUT_MAX  999.0f   // TIM3 period = 999, so max PWM = 999
@@ -76,7 +78,7 @@ SPI_HandleTypeDef hspi1;
 TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim3;
 
-UART_HandleTypeDef huart1;
+UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
 
@@ -97,8 +99,8 @@ static void MX_GPIO_Init(void);
 static void MX_I2C1_Init(void);
 static void MX_SPI1_Init(void);
 static void MX_TIM3_Init(void);
-static void MX_USART1_UART_Init(void);
 static void MX_TIM2_Init(void);
+static void MX_USART2_UART_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -219,6 +221,18 @@ void Motors_Drive(float pid_output) {
     }
 }
 
+void cout(const char *fmt, ...) {
+    char buffer[128]; 
+    va_list args;
+    va_start(args, fmt);
+    int l = vsnprintf(buffer, sizeof(buffer), fmt, args);
+    va_end(args);
+    if (l > 0) {
+        HAL_UART_Transmit(&huart2, (uint8_t*)buffer, l, HAL_MAX_DELAY);
+    }
+}
+
+
 /* USER CODE END 0 */
 
 /**
@@ -253,9 +267,9 @@ int main(void)
   MX_I2C1_Init();
   MX_SPI1_Init();
   MX_TIM3_Init();
-  MX_USART1_UART_Init();
   MX_USB_DEVICE_Init();
   MX_TIM2_Init();
+  MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
 
   // ---- Initialize Gyroscope (I3G4250D via SPI) ----
@@ -287,17 +301,33 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-[]      if (display_flag == 1) {
+     if (display_flag == 1) {
           display_flag = 0;
 
-          char tx_buffer[100];
+          // 1. Extract integer and fractional parts for shared_angle
+          int shared_angle_i = (int)shared_angle;
+          int shared_angle_f = (int)(fabsf(shared_angle - shared_angle_i) * 100);
 
-          // Print: filtered_angle, acc_angle, gyro_rate, pid_output
-          int len = sprintf(tx_buffer, "%.2f,%.2f,%.2f,%.2f\r\n",
-                            shared_angle, acc_angle, gyro_rate, shared_pid_out);
+          // 2. Extract integer and fractional parts for acc_angle
+          int acc_angle_i = (int)acc_angle;
+          int acc_angle_f = (int)(fabsf(acc_angle - acc_angle_i) * 100);
 
-          HAL_UART_Transmit(&huart1, (uint8_t*)tx_buffer, len, HAL_MAX_DELAY);
-      }
+          // 3. Extract integer and fractional parts for gyro_rate
+          int gyro_rate_i = (int)gyro_rate;
+          int gyro_rate_f = (int)(fabsf(gyro_rate - gyro_rate_i) * 100);
+
+          // 4. Extract integer and fractional parts for shared_pid_out
+          int shared_pid_out_i = (int)shared_pid_out;
+          int shared_pid_out_f = (int)(fabsf(shared_pid_out - shared_pid_out_i) * 100);
+
+          // Print using integer formatting
+          cout("%d.%02d,%d.%02d,%d.%02d,%d.%02d\r\n", 
+                shared_angle_i, shared_angle_f, 
+                acc_angle_i, acc_angle_f, 
+                gyro_rate_i, gyro_rate_f, 
+                shared_pid_out_i, shared_pid_out_f);
+                }
+                
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -344,9 +374,9 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
-  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_USB|RCC_PERIPHCLK_USART1
+  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_USB|RCC_PERIPHCLK_USART2
                               |RCC_PERIPHCLK_I2C1;
-  PeriphClkInit.Usart1ClockSelection = RCC_USART1CLKSOURCE_PCLK2;
+  PeriphClkInit.Usart2ClockSelection = RCC_USART2CLKSOURCE_PCLK1;
   PeriphClkInit.I2c1ClockSelection = RCC_I2C1CLKSOURCE_HSI;
   PeriphClkInit.USBClockSelection = RCC_USBCLKSOURCE_PLL;
   if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)
@@ -552,37 +582,37 @@ static void MX_TIM3_Init(void)
 }
 
 /**
-  * @brief USART1 Initialization Function
+  * @brief USART2 Initialization Function
   * @param None
   * @retval None
   */
-static void MX_USART1_UART_Init(void)
+static void MX_USART2_UART_Init(void)
 {
 
-  /* USER CODE BEGIN USART1_Init 0 */
+  /* USER CODE BEGIN USART2_Init 0 */
 
-  /* USER CODE END USART1_Init 0 */
+  /* USER CODE END USART2_Init 0 */
 
-  /* USER CODE BEGIN USART1_Init 1 */
+  /* USER CODE BEGIN USART2_Init 1 */
 
-  /* USER CODE END USART1_Init 1 */
-  huart1.Instance = USART1;
-  huart1.Init.BaudRate = 115200;
-  huart1.Init.WordLength = UART_WORDLENGTH_8B;
-  huart1.Init.StopBits = UART_STOPBITS_1;
-  huart1.Init.Parity = UART_PARITY_NONE;
-  huart1.Init.Mode = UART_MODE_TX_RX;
-  huart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
-  huart1.Init.OverSampling = UART_OVERSAMPLING_16;
-  huart1.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
-  huart1.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
-  if (HAL_UART_Init(&huart1) != HAL_OK)
+  /* USER CODE END USART2_Init 1 */
+  huart2.Instance = USART2;
+  huart2.Init.BaudRate = 115200;
+  huart2.Init.WordLength = UART_WORDLENGTH_8B;
+  huart2.Init.StopBits = UART_STOPBITS_1;
+  huart2.Init.Parity = UART_PARITY_NONE;
+  huart2.Init.Mode = UART_MODE_TX_RX;
+  huart2.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart2.Init.OverSampling = UART_OVERSAMPLING_16;
+  huart2.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
+  huart2.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
+  if (HAL_UART_Init(&huart2) != HAL_OK)
   {
     Error_Handler();
   }
-  /* USER CODE BEGIN USART1_Init 2 */
+  /* USER CODE BEGIN USART2_Init 2 */
 
-  /* USER CODE END USART1_Init 2 */
+  /* USER CODE END USART2_Init 2 */
 
 }
 
@@ -642,21 +672,21 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : PB12 PB13 PB14 PB15 (Motor Direction) */
+  /*Configure GPIO pins : PB12 PB13 PB14 PB15 */
   GPIO_InitStruct.Pin = GPIO_PIN_12|GPIO_PIN_13|GPIO_PIN_14|GPIO_PIN_15;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : PD8 PD9 (Extra outputs) */
+  /*Configure GPIO pins : PD8 PD9 */
   GPIO_InitStruct.Pin = GPIO_PIN_8|GPIO_PIN_9;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : PD10 PD11 PD12 (Encoder inputs) */
+  /*Configure GPIO pins : PD10 PD11 PD12 */
   GPIO_InitStruct.Pin = GPIO_PIN_10|GPIO_PIN_11|GPIO_PIN_12;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
