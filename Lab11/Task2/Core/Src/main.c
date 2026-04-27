@@ -43,13 +43,13 @@
 // Kd: damps oscillations. Start around 0.1-0.5.
 #define KP  30.0f
 #define KI  0.50f
-#define KD 2.0f
+#define KD 1.5f
 
 /* ---- Setpoint ---- */
 // The target angle in degrees (0 = perfectly upright)
 // You may need to offset this slightly if your robot's center
 // of gravity isn't perfectly centered. Tune by observation.
-#define SETPOINT -2.1f
+#define SETPOINT -2.13f
 
 /* ---- Output Limits ---- */
 #define PID_OUT_MAX  999.0f   // TIM3 period = 999, so max PWM = 999
